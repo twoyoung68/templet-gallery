@@ -1,4 +1,6 @@
 import type { DesignExportPayload, StoredDesign } from '../types';
+import { uploadDesignRemote } from './designsRemote';
+import { isSupabaseConfigured } from './supabaseClient';
 import { saveDesign } from './db';
 import { renderFirstPageThumbnail } from './pdfThumbnail';
 
@@ -24,6 +26,16 @@ function base64ToBlob(base64: string, mime = 'application/pdf'): Blob {
   return new Blob([bytes], { type: mime });
 }
 
+async function pdfBlobForExport(d: StoredDesign): Promise<Blob> {
+  if (d.pdfBlob) return d.pdfBlob;
+  if (d.pdfPublicUrl) {
+    const res = await fetch(d.pdfPublicUrl);
+    if (!res.ok) throw new Error('PDF를 가져올 수 없습니다.');
+    return res.blob();
+  }
+  throw new Error('PDF 데이터가 없습니다.');
+}
+
 export async function exportDesignsJson(designs: StoredDesign[]): Promise<string> {
   const designsOut = await Promise.all(
     designs.map(async (d) => ({
@@ -34,7 +46,7 @@ export async function exportDesignsJson(designs: StoredDesign[]): Promise<string
       thumbnailDataUrl: d.thumbnailDataUrl,
       createdAt: d.createdAt,
       isSample: d.isSample,
-      pdfBase64: await blobToBase64(d.pdfBlob),
+      pdfBase64: await blobToBase64(await pdfBlobForExport(d)),
     }))
   );
 
@@ -75,6 +87,8 @@ export async function importDesignsFromJsonText(text: string): Promise<number> {
   }
 
   let count = 0;
+  const useRemote = isSupabaseConfigured();
+
   for (const row of payload.designs) {
     if (
       !row ||
@@ -95,18 +109,29 @@ export async function importDesignsFromJsonText(text: string): Promise<number> {
       thumbnailDataUrl = await renderFirstPageThumbnail(pdfBlob);
     }
 
-    const design: StoredDesign = {
-      id: r.id,
-      title: r.title,
-      author: r.author,
-      yaml: r.yaml,
-      pdfBlob,
-      thumbnailDataUrl,
-      createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
-      isSample: r.isSample,
-    };
-
-    await saveDesign(design);
+    if (useRemote) {
+      await uploadDesignRemote({
+        id: r.id,
+        title: r.title,
+        author: r.author,
+        yaml: r.yaml,
+        thumbnailDataUrl,
+        pdfBlob,
+        isSample: r.isSample,
+      });
+    } else {
+      const design: StoredDesign = {
+        id: r.id,
+        title: r.title,
+        author: r.author,
+        yaml: r.yaml,
+        pdfBlob,
+        thumbnailDataUrl,
+        createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
+        isSample: r.isSample,
+      };
+      await saveDesign(design);
+    }
     count += 1;
   }
 

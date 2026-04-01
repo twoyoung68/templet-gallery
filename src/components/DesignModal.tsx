@@ -38,7 +38,8 @@ function useElementWidth<T extends HTMLElement>() {
 }
 
 export function DesignModal({ design, onClose }: Props) {
-  const pdfUrl = usePdfObjectUrl(design.pdfBlob);
+  const blobUrl = usePdfObjectUrl(design.pdfBlob ?? null);
+  const pdfUrl = design.pdfPublicUrl ?? blobUrl;
   const [page, setPage] = useState(1);
   const [numPages, setNumPages] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
