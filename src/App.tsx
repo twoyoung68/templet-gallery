@@ -1,206 +1,169 @@
-import { useCallback, useEffect, useState } from 'react';
-import { AnimatePresence } from 'framer-motion';
-import { Share2 } from 'lucide-react';
-import { AdminModePanel } from './components/AdminModePanel';
-import { BackupToolbar } from './components/BackupToolbar';
+import { useEffect, useState } from 'react';
+import { supabase } from './lib/supabase';
+import { StoredDesign } from './types';
+import { DesignCard } from './components/DesignCard';
 import { DesignModal } from './components/DesignModal';
-import { GalleryGrid } from './components/GalleryGrid';
-import { UploadSection } from './components/UploadSection';
-import { readAdminSession } from './lib/adminSession';
-import { deleteDesignRemote, fetchDesignsRemote, uploadDesignRemote } from './lib/designsRemote';
-import { deleteDesign, getAllDesigns, saveDesign } from './lib/db';
-import { seedSampleDesignsIfEmpty } from './lib/seed';
-import { isSupabaseConfigured } from './lib/supabaseClient';
-import type { StoredDesign } from './types';
+import { RegisterModal } from './components/RegisterModal';
+import { BackupToolbar } from './components/BackupToolbar';
+import { LayoutGrid, Loader2, Lock } from 'lucide-react';
 
-export default function App() {
+const ENTRY_PASSWORD = "1207"; // 🔓 1차 입장 비밀번호
+const ADMIN_DELETE_PASSWORD = "9206833"; // 🔒 2차 삭제 관리자 비밀번호
+
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [designs, setDesigns] = useState<StoredDesign[]>([]);
-  const [ready, setReady] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [seedWarning, setSeedWarning] = useState<string | null>(null);
-  const [modalDesign, setModalDesign] = useState<StoredDesign | null>(null);
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(() => readAdminSession());
-  const remote = isSupabaseConfigured();
+  const [loading, setLoading] = useState(true);
+  const [selectedDesign, setSelectedDesign] = useState<StoredDesign | null>(null);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // 🛠️ 데이터 불러오기 (인증 성공 시 실행)
+  const fetchDesigns = async () => {
+    setLoading(true);
     try {
-      if (remote) {
-        setDesigns(await fetchDesignsRemote());
-      } else {
-        setDesigns(await getAllDesigns());
-      }
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : '데이터를 불러오지 못했습니다.');
+      const { data, error } = await supabase
+        .from('designs')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setDesigns(data || []);
+    } catch (error: any) {
+      console.error("데이터 로드 실패:", error.message);
+    } finally {
+      setLoading(false);
     }
-  }, [remote]);
+  };
+
+  // 🗑️ 관리자 전용 삭제 로직 (비밀번호 9206833 확인)
+  const handleDelete = async (id: string) => {
+    const adminPass = window.prompt("⚠️ 보안 경고: 삭제 권한이 필요합니다.\n관리자 비밀번호를 입력하세요.");
+    
+    if (adminPass === ADMIN_DELETE_PASSWORD) {
+      try {
+        const { error } = await supabase.from('designs').delete().eq('id', id);
+        if (error) throw error;
+        alert("✅ 해당 PDF 데이터가 영구적으로 삭제되었습니다.");
+        fetchDesigns();
+        setSelectedDesign(null);
+      } catch (err: any) {
+        alert("❌ 삭제 실패: " + err.message);
+      }
+    } else if (adminPass !== null) {
+      alert("🚫 권한 오류: 비밀번호가 틀립니다.");
+    }
+  };
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        await seedSampleDesignsIfEmpty();
-      } catch (e) {
-        if (!cancelled) {
-          setSeedWarning(
-            e instanceof Error
-              ? `샘플 자동 추가 실패: ${e.message}`
-              : '샘플 자동 추가에 실패했습니다.'
-          );
-        }
-      }
-      if (cancelled) return;
-      await refresh();
-      if (!cancelled) setReady(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refresh]);
+    if (isAuthenticated) fetchDesigns();
+  }, [isAuthenticated]);
 
-  const handleOpen = (d: StoredDesign) => setModalDesign(d);
-
-  const handleDelete = (d: StoredDesign) => {
-    if (!isAdmin || !readAdminSession()) return;
-    if (!window.confirm('정말로 이 템플릿을 삭제하시겠습니까?')) return;
-    void (async () => {
-      try {
-        if (remote) {
-          await deleteDesignRemote(d);
-        } else {
-          await deleteDesign(d.id);
-        }
-        await refresh();
-        if (modalDesign?.id === d.id) setModalDesign(null);
-      } catch (e) {
-        setLoadError(e instanceof Error ? e.message : '삭제에 실패했습니다.');
-      }
-    })();
-  };
-
-  const handleSaved = (design: StoredDesign) => {
-    void (async () => {
-      try {
-        if (remote) {
-          if (!design.pdfBlob) throw new Error('PDF 데이터가 없습니다.');
-          await uploadDesignRemote({
-            id: design.id,
-            title: design.title,
-            author: design.author,
-            yaml: design.yaml,
-            thumbnailDataUrl: design.thumbnailDataUrl,
-            pdfBlob: design.pdfBlob,
-            isSample: design.isSample,
-          });
-        } else {
-          await saveDesign(design);
-        }
-        await refresh();
-      } catch (e) {
-        setLoadError(e instanceof Error ? e.message : '저장에 실패했습니다.');
-      }
-    })();
-  };
+  // 🔐 1차 관문: 입구 보안 (1207)
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#004c97] flex items-center justify-center p-6">
+        <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl w-full max-w-md text-center border-4 border-blue-50">
+          <div className="bg-blue-50 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-8 text-[#004c97]">
+            <Lock size={48} />
+          </div>
+          <h2 className="text-2xl font-black text-slate-800 mb-2 tracking-tighter">TI-PLATFORM LOGIN</h2>
+          <p className="text-slate-400 text-xs mb-10 font-bold uppercase tracking-widest italic">Daewoo E&C Plant TI Team</p>
+          <input 
+            type="password" 
+            placeholder="Passcode"
+            autoFocus
+            className="w-full px-6 py-5 rounded-[1.5rem] border-2 border-slate-100 focus:border-[#004c97] focus:outline-none mb-6 text-center font-black text-2xl tracking-[0.8em]"
+            onChange={(e) => {
+              if (e.target.value === ENTRY_PASSWORD) setIsAuthenticated(true);
+            }}
+          />
+          <div className="text-slate-300 text-[10px] font-bold">인증 번호를 입력하면 금고가 열립니다.</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-white">
-      <header className="border-b border-slate-200/80 bg-white shadow-sm">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-daewoo">EPC Design Share</p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-              PPT·PDF 디자인 갤러리
-            </h1>
-            <p className="mt-2 max-w-xl text-sm text-slate-600">
-              {remote
-                ? 'Supabase에 연결되어 있습니다. 누구나 브라우저에서 같은 갤러리를 보고, 템플릿을 공유할 수 있습니다.'
-                : '팀이 공유한 PDF 첫 장을 미리보고, 상세에서 전체 슬라이드와 YAML 규칙을 확인하세요. (.env에 Supabase를 넣으면 전역 공유 모드로 전환됩니다.)'}
-            </p>
+    <div className="min-h-screen bg-white font-sans text-slate-900 relative pb-24">
+      {/* 🏗️ 상단 헤더: 대우건설 블루 아이덴티티 */}
+      <header className="bg-white/95 backdrop-blur-md border-b border-slate-100 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-[1600px] mx-auto px-8 py-5 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <div className="bg-[#004c97] p-2.5 rounded-2xl text-white shadow-lg shadow-blue-100">
+              <LayoutGrid size={24} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tighter text-slate-800">
+                PDF → PPT 변환 <span className="text-[#004c97] italic uppercase">Design Gallery</span>
+              </h1>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em] mt-0.5">Plant Technology Innovation Team</p>
+            </div>
           </div>
-          <BackupToolbar designs={designs} onImported={() => void refresh()} />
+          
+          <button 
+            onClick={() => setIsRegisterOpen(true)}
+            className="bg-[#004c97] text-white px-8 py-3.5 rounded-full font-black shadow-xl hover:bg-[#00356b] transition-all hover:scale-105 active:scale-95"
+          >
+            + 신규 PDF 등록
+          </button>
         </div>
       </header>
 
-      <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-        {!remote && (
-          <div
-            className="mb-6 rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900"
-            role="status"
-          >
-            <strong className="font-semibold">로컬 모드</strong> — 데이터는 이 브라우저 IndexedDB에만
-            저장됩니다. 전역 공유를 원하면 프로젝트 루트에{' '}
-            <code className="rounded bg-white/80 px-1 text-xs">.env</code> 파일에{' '}
-            <code className="rounded bg-white/80 px-1 text-xs">VITE_SUPABASE_URL</code>,{' '}
-            <code className="rounded bg-white/80 px-1 text-xs">VITE_SUPABASE_ANON_KEY</code> 를 설정한 뒤{' '}
-            <code className="rounded bg-white/80 px-1 text-xs">supabase/schema.sql</code> 과 Storage 버킷을 준비하세요.
-          </div>
-        )}
-
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">디자인 갤러리</h2>
-          <button
-            type="button"
-            onClick={() => setUploadOpen((v) => !v)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-daewoo px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-daewoo/25 transition hover:bg-daewoo-dark"
-          >
-            <Share2 className="h-4 w-4" aria-hidden />
-            나만의 스타일 공유하기
-          </button>
+      {/* 📊 메인 갤러리 섹션 */}
+      <main className="max-w-[1600px] mx-auto px-8 py-10">
+        <div className="mb-8">
+          <BackupToolbar designs={designs} onImport={fetchDesigns} />
         </div>
 
-        <UploadSection
-          open={uploadOpen}
-          onClose={() => setUploadOpen(false)}
-          onSaved={handleSaved}
-        />
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-40">
+            <Loader2 className="animate-spin text-[#004c97] opacity-20" size={60} />
+            <p className="mt-4 text-xs font-black text-slate-300 tracking-[0.4em]">SYNCING DATABASE...</p>
+          </div>
+        ) : designs.length === 0 ? (
+          <div className="text-center py-40 bg-slate-50 rounded-[4rem] border border-slate-100">
+            <p className="text-slate-400 font-bold text-xl tracking-tight">등록된 PDF 가 없습니다.</p>
+          </div>
+        ) : (
+          /* 💡 30% 더 작고 촘촘한 고밀도 그리드 (최대 8열) */
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-5">
+            {designs.map((design) => (
+              <DesignCard 
+                key={design.id} 
+                design={design} 
+                onClick={() => setSelectedDesign(design)} 
+              />
+            ))}
+          </div>
+        )}
+      </main>
 
-        {!ready && (
-          <p className="mt-10 text-center text-sm text-slate-500">갤러리를 준비하는 중…</p>
-        )}
-        {seedWarning && (
-          <div
-            className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-            role="status"
-          >
-            {seedWarning}{' '}
-            {remote
-              ? 'Supabase Storage 버킷·RLS SQL이 올바른지 확인하세요.'
-              : '네트워크를 확인하거나 JSON 복구로 데이터를 넣을 수 있습니다.'}
-          </div>
-        )}
-        {loadError && (
-          <div
-            className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
-            role="alert"
-          >
-            {loadError}
-            {!remote && ' (시크릿 모드에서는 IndexedDB가 제한될 수 있습니다.)'}
-          </div>
-        )}
-        {ready && !loadError && (
-          <div className="mt-8">
-            <GalleryGrid
-              designs={designs}
-              canDelete={isAdmin}
-              onOpen={handleOpen}
-              onDelete={handleDelete}
-            />
-          </div>
-        )}
-      </section>
-
-      <footer className="border-t border-slate-200 py-8 text-center text-xs text-slate-500">
-        Deep Blue 포인트 #004B91 · {remote ? 'Supabase 공유 저장소' : '로컬 저장'} · Vite + React
+      {/* 👷 하단 우측: 대우건설 소속 표기 (고정) */}
+      <footer className="fixed bottom-8 right-10 pointer-events-none z-0 text-right">
+        <div className="opacity-30">
+          <span className="text-[9px] font-black text-slate-400 tracking-[0.4em] mb-1">DATA REPOSITORY</span>
+          <h3 className="text-lg font-black text-slate-800 tracking-tighter">
+            DAEWOO E&C <span className="text-[#004c97]">PLANT TI TEAM</span>
+          </h3>
+        </div>
       </footer>
 
-      <AnimatePresence>
-        {modalDesign && (
-          <DesignModal key={modalDesign.id} design={modalDesign} onClose={() => setModalDesign(null)} />
-        )}
-      </AnimatePresence>
-
-      <AdminModePanel isAdmin={isAdmin} onAdminChange={setIsAdmin} />
+      {/* 모달 시스템 */}
+      {selectedDesign && (
+        <DesignModal 
+          design={selectedDesign} 
+          onClose={() => setSelectedDesign(null)} 
+          onDelete={handleDelete} 
+        />
+      )}
+      {isRegisterOpen && (
+        <RegisterModal 
+          onClose={() => setIsRegisterOpen(false)} 
+          onSuccess={() => { setIsRegisterOpen(false); fetchDesigns(); }} 
+        />
+      )}
     </div>
   );
 }
+
+export default App;

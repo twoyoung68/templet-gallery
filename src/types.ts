@@ -1,31 +1,19 @@
-export type StoredDesign = {
+// src/types.ts
+
+// 1. 수파베이스 장부(DB)와 100% 일치하는 데이터 구조
+export interface StoredDesign {
   id: string;
   title: string;
-  author: string;
-  yaml: string;
-  thumbnailDataUrl: string;
-  createdAt: number;
-  /** 시드된 샘플 여부 (선택) */
-  isSample?: boolean;
-  /** 로컬(IndexedDB) 또는 방금 업로드한 직후 */
-  pdfBlob?: Blob;
-  /** Supabase Storage 공개 URL */
-  pdfPublicUrl?: string;
-  /** Storage 객체 경로 (삭제 시) */
-  pdfStoragePath?: string;
-};
+  description: string;
+  category: string;
+  thumbnail_url: string; // 💡 DB의 thumbnail_url과 일치
+  pdf_url: string;       // 💡 DB의 pdf_url과 일치
+  yaml_content: string;  // 💡 DB의 yaml_content와 일치
+  created_at: string;
+}
 
-export type DesignExportPayload = {
-  version: 1;
-  exportedAt: string;
-  designs: Array<{
-    id: string;
-    title: string;
-    author: string;
-    yaml: string;
-    thumbnailDataUrl: string;
-    createdAt: number;
-    isSample?: boolean;
-    pdfBase64: string;
-  }>;
-};
+// 2. 백업(JSON 내보내기/가져오기)을 위한 구조
+export interface DesignExportPayload {
+  designs: StoredDesign[];
+  exportDate: string;
+}

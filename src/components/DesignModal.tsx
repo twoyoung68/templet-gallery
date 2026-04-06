@@ -1,188 +1,87 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-import { X, Copy, Check } from 'lucide-react'; // 안 쓰는 버튼 아이콘 제거
-import { Document, Page } from 'react-pdf';
-import type { StoredDesign } from '../types';
+import { useState } from 'react';
+import { StoredDesign } from '../types';
+import { X, FileText, Copy, Check, Trash2, ExternalLink, ShieldCheck } from 'lucide-react';
 
-type Props = {
+interface Props {
   design: StoredDesign;
   onClose: () => void;
-};
-
-function usePdfObjectUrl(blob: Blob | null) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!blob) {
-      setUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(blob);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [blob]);
-  return url;
+  onDelete: (id: string) => void;
 }
 
-function useElementWidth<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [width, setWidth] = useState(560);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(Math.max(300, Math.floor(el.clientWidth))));
-    ro.observe(el);
-    setWidth(Math.max(300, Math.floor(el.clientWidth)));
-    return () => ro.disconnect();
-  }, []);
-  return { ref, width };
-}
-
-export function DesignModal({ design, onClose }: Props) {
-  const blobUrl = usePdfObjectUrl(design.pdfBlob ?? null);
-  const pdfUrl = design.pdfPublicUrl ?? blobUrl;
-  const [numPages, setNumPages] = useState<number | null>(null);
+export function DesignModal({ design, onClose, onDelete }: Props) {
   const [copied, setCopied] = useState(false);
-  const { ref, width } = useElementWidth<HTMLDivElement>();
 
-  useEffect(() => {
-    setNumPages(null);
-  }, [design.id]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const onLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
-    setNumPages(n);
-  }, []);
-
-  const copyYaml = useCallback(async () => {
-    await navigator.clipboard.writeText(design.yaml);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  }, [design.yaml]);
-
-  // 페이지 너비 계산 (좌우 여백 고려)
-  const mainPageWidth = Math.min(width - 40, 880);
-
-  if (!pdfUrl) return null;
+  const handleCopy = () => {
+    if (design.yaml_content) {
+      navigator.clipboard.writeText(design.yaml_content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   return (
-    <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-    >
-      <button
-        type="button"
-        className="absolute inset-0 bg-slate-900/45 backdrop-blur-[2px]"
-        aria-label="닫기"
-        onClick={onClose}
-      />
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="design-modal-title"
-        initial={{ opacity: 0, scale: 0.97, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: 12 }}
-        transition={{ type: 'spring', damping: 30, stiffness: 360 }}
-        className="relative flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xl ring-1 ring-slate-200/60 xl:max-w-7xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 상단 헤더 섹션 */}
-        <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3 pr-14 sm:px-5 sm:py-4 sm:pr-16">
-          <div className="min-w-0 pr-2">
-            <h2 id="design-modal-title" className="truncate text-base font-semibold text-slate-900 sm:text-lg">
-              {design.title}
-            </h2>
-            <p className="mt-0.5 truncate text-xs text-slate-500 sm:text-sm">{design.author}</p>
+    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-[95vw] h-[94vh] rounded-[3rem] shadow-2xl flex overflow-hidden relative">
+        <button onClick={onClose} className="absolute top-6 right-6 z-30 p-3 bg-white hover:bg-slate-100 rounded-2xl shadow-xl transition-all border border-slate-100 text-slate-400">
+          <X size={24} />
+        </button>
+
+        {/* 왼쪽: PDF 뷰어 영역 */}
+        <div className="flex-[3] bg-slate-50 border-r border-slate-100 p-6 flex flex-col">
+          <div className="flex items-center justify-between mb-4 px-2">
+            <div className="flex items-center gap-3">
+              <FileText className="text-[#004c97]" />
+              <h2 className="text-xl font-black text-slate-800 tracking-tighter">{design.title}</h2>
+            </div>
+            <a href={design.pdf_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-xs font-bold text-blue-600 bg-blue-50 px-4 py-2 rounded-xl hover:bg-blue-100 transition-all">
+              <ExternalLink size={14} /> 원본 PDF 열기
+            </a>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-3 top-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-[#004B91] hover:bg-[#004B91]/5 hover:text-[#004B91]"
-            aria-label="닫기"
-          >
-            <X className="h-5 w-5 stroke-[2.5]" aria-hidden />
-          </button>
+          <iframe src={`${design.pdf_url}#view=FitH`} className="w-full h-full rounded-3xl border-0 shadow-inner bg-white" title="PDF Viewer" />
         </div>
 
-        {/* 메인 콘텐츠 그리드 */}
-        <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1fr_320px] xl:grid-cols-[1fr_380px]">
-          
-          {/* 왼쪽: PDF 뷰어 섹션 (세로 스크롤 개조 포인트) */}
-          <div className="flex flex-col border-b border-slate-100 bg-slate-50/90 lg:border-b-0 lg:border-r">
-            {/* 상단 정보바 */}
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200/80 bg-white px-4 py-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">PDF 문서 프리뷰</span>
-              <span className="text-sm font-semibold text-[#004B91]">
-                총 {numPages || '...'} 장표
-              </span>
+        {/* 오른쪽: 정보 및 YAML 영역 */}
+        <div className="flex-1 p-10 overflow-y-auto bg-white flex flex-col justify-between">
+          <div className="space-y-10">
+            <div>
+              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-4">Description</h4>
+              <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 text-sm text-slate-600 leading-relaxed font-medium">
+                {design.description || '상세 정보가 등록되지 않았습니다.'}
+              </div>
             </div>
 
-            {/* 스크롤 가능한 도면 영역 */}
-            <div ref={ref} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-8 [scrollbar-width:thin]">
-              <Document
-                file={pdfUrl}
-                onLoadSuccess={onLoadSuccess}
-                loading={<div className="flex py-20 items-center justify-center text-sm text-slate-500">도면 로딩 중…</div>}
-                className="flex flex-col items-center gap-8" // 장표 간 간격(gap-8) 추가
-              >
-                {/* 모든 장표를 세로로 나열 */}
-                {numPages ? (
-                  Array.from({ length: numPages }, (_, i) => (
-                    <div 
-                      key={`page_${i + 1}`} 
-                      className="rounded-lg border border-slate-200/90 bg-white p-1 shadow-xl shadow-slate-300/20 ring-1 ring-slate-100"
-                    >
-                      <Page 
-                        pageNumber={i + 1} 
-                        width={mainPageWidth} 
-                        className="max-w-full"
-                        renderAnnotationLayer={false}
-                        renderTextLayer={false}
-                      />
-                    </div>
-                  ))
-                ) : null}
-              </Document>
-            </div>
-          </div>
-
-          {/* 오른쪽: YAML 정보 섹션 (기존 유지) */}
-          <div className="flex max-h-[42vh] min-h-[200px] flex-col bg-white lg:max-h-none lg:min-h-0">
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 sm:px-5">
-              <button
-                type="button"
-                onClick={copyYaml}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-[#004B91] hover:text-[#004B91]"
-              >
-                {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                {copied ? '복사됨' : 'YAML 복사'}
-              </button>
-              <button
-                type="button"
-                onClick={copyYaml}
-                className="inline-flex flex-1 items-center justify-center rounded-lg bg-[#004B91] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:brightness-110 min-[480px]:flex-none"
-              >
-                이 디자인 선택하기
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-5">
-              <pre className="h-full min-h-[160px] rounded-xl border border-slate-200 bg-slate-900 p-4 text-left text-[11px] leading-relaxed text-slate-100 sm:text-xs">
-                <code>{design.yaml}</code>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">YAML Config</h4>
+                {/* 📋 YAML 원클릭 복사 버튼 */}
+                <button 
+                  onClick={handleCopy}
+                  className={`flex items-center gap-2 text-[11px] font-black px-4 py-2 rounded-xl transition-all shadow-sm ${copied ? 'bg-emerald-500 text-white shadow-emerald-100' : 'bg-[#004c97] text-white shadow-blue-100 hover:bg-[#00356b]'}`}
+                >
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  {copied ? 'COPIED!' : 'YAML COPY'}
+                </button>
+              </div>
+              <pre className="bg-slate-900 text-emerald-400 p-8 rounded-[2.5rem] text-[13px] font-mono shadow-2xl border border-slate-800 leading-relaxed overflow-x-auto">
+                {design.yaml_content || '# No Data Available'}
               </pre>
             </div>
           </div>
+
+          {/* 🗑️ 하단 삭제 권한 안내 및 버튼 */}
+          <div className="mt-12 pt-8 border-t border-slate-50 flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
+              <ShieldCheck size={12} /> Data Management Policy
+            </span>
+            <button 
+              onClick={() => onDelete(design.id)}
+              className="flex items-center gap-2 text-red-300 hover:text-red-500 transition-colors text-[10px] font-black uppercase tracking-tighter"
+            >
+              <Trash2 size={14} /> Delete Entry (Admin Only)
+            </button>
+          </div>
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }
